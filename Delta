@@ -1,0 +1,59 @@
+import pandas as pd
+import numpy as np
+from itertools import combinations
+
+
+delta_fx_input=pd.read_excel('FX_Delta_Input.xlsx')
+
+rw_delta = 0.15
+rw_delta1 = rw_delta/2**(0.5)
+#For the specified currency pairs by the Basel Committee,[22] and for currency pairs 
+#forming first order crosses across these specified currency pairs,[23] the above 
+#risk weight may at the discretion of the bank be divided by the square root of 2
+
+RF_level_sens = delta_fx_input.groupby(['Label 1']).sum()
+RF_level_sens = RF_level_sens.reset_index()
+RF_level_sens['Weighted Sens'] = RF_level_sens['Sensitivity (PV)'] * rw_delta1
+
+#Intra Bucket aggregation
+
+Bucket_level_sens = RF_level_sens.copy()
+Bucket_level_sens['Kb'] = (Bucket_level_sens['Weighted Sens']**(2))**0.5
+
+#Inter bucket aggregation
+gamma_correlation_low = 0.45
+gamma_correlation_med = 0.6  #across bucket correlation MAR 21, par. 21.89
+gamma_correlation_high = 0.75
+
+Bucket_level_sens['Sb'] = Bucket_level_sens['Weighted Sens']
+
+aa=np.array(Bucket_level_sens['Sb'])
+aa=pd.DataFrame(combinations(aa,2))
+
+Sb_Sc= sum(aa.product(axis = 1))*2
+
+Sb_Sc_GammaCorrelationLow = Sb_Sc * gamma_correlation_low
+Sb_Sc_GammaCorrelationMed = Sb_Sc * gamma_correlation_med
+Sb_Sc_GammaCorrelationHigh = Sb_Sc * gamma_correlation_high
+
+
+
+summation_Kb_square = sum(Bucket_level_sens['Kb']**2)
+
+Fx_Delta_Low = np.sqrt(summation_Kb_square + Sb_Sc_GammaCorrelationLow)
+Fx_Delta_Med = np.sqrt(summation_Kb_square + Sb_Sc_GammaCorrelationMed)
+Fx_Delta_High = np.sqrt(summation_Kb_square + Sb_Sc_GammaCorrelationHigh)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
