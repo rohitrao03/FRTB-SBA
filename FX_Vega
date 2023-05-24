@@ -1,0 +1,121 @@
+import pandas as pd
+import numpy as np
+import math
+
+
+vega_fx_input=pd.read_excel('FX_Vega_Input.xlsx')
+
+LH = 40
+RW_sigma = 0.55
+
+RW = min(1,RW_sigma*np.sqrt(LH)/np.sqrt(10))   # MAR21, par. 21.92
+
+
+RF_level_sens = vega_fx_input.groupby(['Label 1', 'Label 2']).sum()
+RF_level_sens['WS_k^2'] =  RF_level_sens['Sensitivity (PV)']**2
+RF_level_sens = RF_level_sens.reset_index()
+
+
+aa=RF_level_sens.groupby(RF_level_sens['Label 1'])
+
+
+Vega_Alpha = 0.01
+
+maturity_years = [float(i.split(' ')[0]) for i in RF_level_sens['Label 2'].unique()]
+
+def correlation_matrix(correlation_scenario):
+    rho = np.zeros((len(maturity_years), len(maturity_years)))
+    if correlation_scenario == 'low':
+        for i in range(len(maturity_years)):
+            for j in range(len(maturity_years)):
+                rho[i, j] = min(min(math.exp(-Vega_Alpha * abs(maturity_years[i] - maturity_years[j]) / min(maturity_years[i], maturity_years[j])),1)*0.75,1)
+    
+    elif correlation_scenario == 'med':
+        for i in range(len(maturity_years)):
+            for j in range(len(maturity_years)):
+                rho[i, j] = min(math.exp(-Vega_Alpha * abs(maturity_years[i] - maturity_years[j]) / min(maturity_years[i], maturity_years[j])),1)
+    
+    elif correlation_scenario == 'high':
+        for i in range(len(maturity_years)):
+            for j in range(len(maturity_years)):
+                rho[i, j] = min(min(math.exp(-Vega_Alpha * abs(maturity_years[i] - maturity_years[j]) / min(maturity_years[i], maturity_years[j])),1)*1.25,1)
+
+
+    return rho
+
+
+
+def calculate_vega_charge(correlation_scenario):
+    bucket={}
+    
+    for i in RF_level_sens['Label 1'].unique():
+        WSk_WSl = np.zeros((len(maturity_years), len(maturity_years)))
+        bb=aa.get_group(i)
+        bb=np.array(bb['Sensitivity (PV)'])
+        for j in range(len(maturity_years)):
+            for k in range(len(maturity_years)):
+                WSk_WSl[j, k] = bb[j]*bb[k]
+        bucket[i]=WSk_WSl
+        
+    
+    #Intra Bucket aggregation
+    
+    bucket_WSk_WSl_rho = {}
+    
+    for i in RF_level_sens['Label 1'].unique():
+        bucket_WSk_WSl_rho[i] = np.multiply(bucket[i],correlation_matrix(correlation_scenario))
+        np.fill_diagonal(bucket_WSk_WSl_rho[i],0)
+        
+        
+    Kb={}
+    for i in RF_level_sens['Label 1'].unique():
+        Kb[i] = np.sqrt(sum(RF_level_sens['WS_k^2'][RF_level_sens['Label 1']==i]) + sum(sum(bucket_WSk_WSl_rho[i])))
+    
+    
+    #Inter Bucket aggregation
+    
+    Sb = aa['Sensitivity (PV)'].sum()
+    
+    
+    
+    Sb_Sc = np.zeros((len(RF_level_sens['Label 1'].unique()), len(RF_level_sens['Label 1'].unique())))
+    
+    for j in range(len(RF_level_sens['Label 1'].unique())):
+        for k in range(len(RF_level_sens['Label 1'].unique())):
+            Sb_Sc[j, k] = Sb[j]*Sb[k]
+    np.fill_diagonal(Sb_Sc,0)
+    return Sb_Sc,Kb
+    
+
+
+
+def gamma_correlation(correlation_scenario):
+    if correlation_scenario=='low':
+        GammaCorrelation = 0.45
+    if correlation_scenario=='med':
+        GammaCorrelation = 0.6
+    if correlation_scenario=='high':
+        GammaCorrelation = 0.75
+    return GammaCorrelation
+    
+    
+
+Sb_Sc,Kb = calculate_vega_charge('low')
+Sb_Sc_GammaCorrelationLow = np.multiply(Sb_Sc,gamma_correlation('low'))
+Kb_sq = [i**2 for i in Kb.values()]
+Fx_Vega_Low = np.sqrt(sum(Kb_sq)+ sum(sum(Sb_Sc_GammaCorrelationLow)))
+
+Sb_Sc,Kb = calculate_vega_charge('med')
+Sb_Sc_GammaCorrelationMed = np.multiply(Sb_Sc,gamma_correlation('med'))
+Kb_sq = [i**2 for i in Kb.values()]
+Fx_Vega_Med = np.sqrt(sum(Kb_sq)+ sum(sum(Sb_Sc_GammaCorrelationMed)))
+
+
+Sb_Sc,Kb = calculate_vega_charge('high')
+Sb_Sc_GammaCorrelationHigh = np.multiply(Sb_Sc,gamma_correlation('high'))
+Kb_sq = [i**2 for i in Kb.values()]
+Fx_Vega_High = np.sqrt(sum(Kb_sq)+ sum(sum(Sb_Sc_GammaCorrelationHigh)))
+
+
+
+
