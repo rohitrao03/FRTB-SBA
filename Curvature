@@ -1,0 +1,84 @@
+
+import pandas as pd
+import numpy as np
+
+
+xls=pd.ExcelFile('FX_Curvature_Input.xlsx')
+curvature_fx_input_trades = pd.read_excel(xls,'Trades')
+curvature_fx_input_CVR = pd.read_excel(xls,'CVR+-')
+
+RW=0.15
+
+RF_level_sens = curvature_fx_input_trades.groupby(['Label 1','IsOptional']).sum()
+RF_level_sens = RF_level_sens.reset_index()
+RF_level_sens = RF_level_sens[RF_level_sens['IsOptional'] == True]
+
+RF_level_sens=pd.merge(RF_level_sens,curvature_fx_input_CVR, on = 'Label 1')
+
+
+RF_level_sens['CVR+'] = -(RF_level_sens['CurvatureUp'] - RF_level_sens['Sim PV'] - (RF_level_sens['Sensitivity (PV)']*RW))
+RF_level_sens['CVR-'] = -(RF_level_sens['CurvatureDown'] - RF_level_sens['Sim PV'] + (RF_level_sens['Sensitivity (PV)']*RW))
+
+
+
+#bucket level aggregation
+
+
+Bucket_level = RF_level_sens.copy()
+Bucket_level['Kb+'] =  np.sqrt((Bucket_level['CVR+'])**2)
+Bucket_level['Kb-'] =  np.sqrt((Bucket_level['CVR-'])**2)
+Bucket_level['Kb'] = Bucket_level[['Kb+','Kb-']].max(axis=1)
+Bucket_level['Scenario Chosen'] = ['Up' if Bucket_level['Kb+'][i]>Bucket_level['Kb-'][i] else 'Down' for i in range(len(Bucket_level))]
+
+Bucket_level['Sb'] = [Bucket_level['CVR+'][i] if Bucket_level['Scenario Chosen'][i]=='Up' else Bucket_level['CVR-'][i] for i in range(len(Bucket_level))]
+
+
+
+psi_Sb_Sc = np.zeros((len(Bucket_level['Label 1'].unique()), len(Bucket_level['Label 1'].unique())))
+
+
+for j in range(len(Bucket_level['Label 1'].unique())):
+    for k in range(len(Bucket_level['Label 1'].unique())):
+        if Bucket_level['Sb'][j]<0 and Bucket_level['Sb'][k]<0:
+            psi_Sb_Sc[j, k] = 0
+        else:
+            psi_Sb_Sc[j, k] = 1
+            
+np.fill_diagonal(psi_Sb_Sc,0)
+
+
+Sb_Sc = np.zeros((len(Bucket_level['Label 1'].unique()), len(Bucket_level['Label 1'].unique())))
+
+for j in range(len(Bucket_level['Label 1'].unique())):
+    for k in range(len(Bucket_level['Label 1'].unique())):
+        Sb_Sc[j, k] = Bucket_level['Sb'][j]*Bucket_level['Sb'][k]
+np.fill_diagonal(Sb_Sc,0)
+
+
+
+#Across bucket aggregation
+
+gamma_correlation_low=0.2025
+gamma_correlation_med=0.36
+gamma_correlation_high = 0.5625
+sum_Kb_sq = sum(Bucket_level['Kb']**2)
+
+
+psi_Sb_Sc_gamma_correlation_low = np.multiply(Sb_Sc,psi_Sb_Sc)*gamma_correlation_low
+sum_psi_Sb_Sc_gamma_correlation_low = sum(sum(psi_Sb_Sc_gamma_correlation_low))
+
+psi_Sb_Sc_gamma_correlation_med = np.multiply(Sb_Sc,psi_Sb_Sc)*gamma_correlation_med
+sum_psi_Sb_Sc_gamma_correlation_med = sum(sum(psi_Sb_Sc_gamma_correlation_med))
+
+psi_Sb_Sc_gamma_correlation_high = np.multiply(Sb_Sc,psi_Sb_Sc)*gamma_correlation_high
+sum_psi_Sb_Sc_gamma_correlation_high = sum(sum(psi_Sb_Sc_gamma_correlation_high))
+
+
+
+Fx_Curvature_Low = np.sqrt(sum_psi_Sb_Sc_gamma_correlation_low + sum_Kb_sq)
+Fx_Curvature_Med = np.sqrt(sum_psi_Sb_Sc_gamma_correlation_med + sum_Kb_sq)
+Fx_Curvature_High = np.sqrt(sum_psi_Sb_Sc_gamma_correlation_high + sum_Kb_sq)
+
+
+
+
